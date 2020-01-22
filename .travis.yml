@@ -58,11 +58,9 @@ before_install:
 - initdb --version
 install:
 # need to manually change the version of six used by Travis for some reason
-- pip uninstall -y six
-- pip install six==1.11.0
-- python bootstrap.py --buildout-version 2.9.5 --setuptools-version 37.0.0
-- bin/buildout
-- pip install pytest==2.9.1
+# - pip uninstall -y six
+# - pip install six==1.11.0
+- pip install poetry
 - pip install coveralls
 - pip install codacy-coverage
 script:
