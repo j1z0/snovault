@@ -123,6 +123,9 @@ flake8 = ""
 coverage = ""
 responses = "^0"
 
+[tool.poetry.scripts]
+wipe-test-indices = "snovault.commands.wipe_test_indices"
+
 [build-system]
 requires = ["poetry>=0.12"]
 build-backend = "^poetry.masonry.api"
