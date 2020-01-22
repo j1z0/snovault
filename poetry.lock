@@ -719,33 +719,6 @@ rdflib = ">=4.2"
 
 [[package]]
 category = "main"
-description = "Forensic debugging WSGI middleware"
-name = "repoze-debug"
-optional = false
-python-versions = "*"
-version = "1.1"
-
-[package.dependencies]
-WebOb = "*"
-
-[package.extras]
-docs = ["sphinx", "webob"]
-testing = ["webob", "coverage", "nose"]
-
-[[package]]
-category = "main"
-description = "A tiny LRU cache implementation and decorator"
-name = "repoze-lru"
-optional = false
-python-versions = "*"
-version = "0.6"
-
-[package.extras]
-docs = ["sphinx"]
-testing = ["nose", "coverage"]
-
-[[package]]
-category = "main"
 description = "Python HTTP for Humans."
 name = "requests"
 optional = false
@@ -1104,7 +1077,7 @@ test = ["zope.event"]
 testing = ["zope.event", "nose", "coverage"]
 
 [metadata]
-content-hash = "fe1ba071b2f0fd3ca9a66fa7518568f288e0f209ea7b5f9b90401a7e8b1ddb72"
+content-hash = "2a82b85f145c4daac8bc4aa45d29ee4f81cc1c93b8439f440d0ff3d3575c2e36"
 python-versions = "^3.4"
 
 [metadata.files]
@@ -1586,13 +1559,6 @@ rdflib = [
 ]
 rdflib-jsonld = [
     {file = "rdflib-jsonld-0.4.0.tar.gz", hash = "sha256:144774786a2fc7de09b24a9309cbcccc78bc48b152536d2ea1c1df2ad715bc2d"},
-]
-repoze-debug = [
-    {file = "repoze.debug-1.1-py2-none-any.whl", hash = "sha256:1d90e5b088b167bcde13bdedfe2e34f15fe8a1f53103e406e49b7c11be4d994d"},
-    {file = "repoze.debug-1.1.tar.gz", hash = "sha256:f897fbb3a09499b0cee3fe2c5e4579ff04e5b0b87b1aad6098d242cbbf573000"},
-]
-repoze-lru = [
-    {file = "repoze.lru-0.6.tar.gz", hash = "sha256:0f7a323bf716d3cb6cb3910cd4fccbee0b3d3793322738566ecce163b01bbd31"},
 ]
 requests = [
     {file = "requests-2.20.0-py2.py3-none-any.whl", hash = "sha256:a84b8c9ab6239b578f22d1c21d51b696dcfe004032bb80ea832398d6909d7279"},
