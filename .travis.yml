@@ -75,4 +75,4 @@ script:
   curl -X POST -d "branches=master" -d "token=$DOCS_TOKEN" https://readthedocs.org/api/v2/webhook/snovault/99596/
   fi
 - echo $TRAVIS_JOB_ID
-- wipe-test-indices $TRAVIS_JOB_ID search-fourfront-builds-uhevxdzfcv7mkm5pj5svcri3aq.us-east-1.es.amazonaws.com:80
+- poetry run wipe-test-indices $TRAVIS_JOB_ID search-fourfront-builds-uhevxdzfcv7mkm5pj5svcri3aq.us-east-1.es.amazonaws.com:80
