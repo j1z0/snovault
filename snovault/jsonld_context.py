@@ -1,6 +1,5 @@
-from . import (
-    TYPES,
-)
+import sys
+
 from pyramid.events import (
     ApplicationCreated,
     subscriber,
@@ -11,7 +10,8 @@ from urllib.parse import (
     quote,
     urlparse,
 )
-from .util import ensurelist
+from . import TYPES
+from .util import ensurelist, debug_log
 
 
 def includeme(config):
@@ -200,7 +200,7 @@ def context_from_schema(schema, prefix, class_name, base_types):
         subschema = subschema.get('items', subschema)
         if '@type' in prop_ld:
             pass
-        elif 'linkTo' in subschema or 'linkFrom' in subschema:
+        elif 'linkTo' in subschema:
             prop_ld['@type'] = '@id'
         elif subschema.get('anyOf') == [{"format": "date-time"}, {"format": "date"}]:
             prop_ld['@type'] = 'xsd:dateTime'
@@ -268,8 +268,6 @@ def ontology_from_schema(schema, prefix, term_path, item_type, class_name, base_
             prop_ld['rdfs:comment'] = subschema['description']
 
         links = ensurelist(subschema.get('linkTo', []))
-        if subschema.get('linkFrom'):
-            links.append(subschema['linkFrom'].split('.')[0])
         if len(links) == 1:
             links, = links
             prop_ld['rdfs:range'] = term_path + links
@@ -284,6 +282,7 @@ def ontology_from_schema(schema, prefix, term_path, item_type, class_name, base_
 
 @view_config(route_name='jsonld_context_no_slash', request_method='GET')
 @view_config(route_name='jsonld_context', request_method='GET')
+@debug_log
 def jsonld_context(context, request):
     """
     Basically a view that list all the terms used on the site in JSON-ld format
@@ -292,6 +291,7 @@ def jsonld_context(context, request):
 
 
 @view_config(route_name='jsonld_term', request_method='GET')
+@debug_log
 def jsonld_term(context, request):
     ontology = request.registry['snovault.jsonld.context']
     term = request.matchdict['term']

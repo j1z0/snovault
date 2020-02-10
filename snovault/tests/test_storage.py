@@ -1,18 +1,30 @@
 import pytest
-from .toolfixtures import registry, storage
+import transaction as transaction_management
+import uuid
+
+from pyramid.threadlocal import manager as threadlocal_manager
+from sqlalchemy.orm.exc import FlushError
+from .. import DBSESSION, STORAGE
+from ..storage import (
+    Blob,
+    CurrentPropertySheet,
+    Key,
+    Link,
+    PickStorage,
+    PropertySheet,
+    RDBStorage,
+    register_storage,
+    Resource,
+    S3BlobStorage,
+)
 from .serverfixtures import session
+from .toolfixtures import registry, storage
+
 
 pytestmark = pytest.mark.storage
 
 
 def test_storage_creation(session):
-    from ..storage import (
-        PropertySheet,
-        CurrentPropertySheet,
-        Blob,
-        Key,
-        Link,
-    )
     assert session.query(PropertySheet).count() == 0
     assert session.query(CurrentPropertySheet).count() == 0
     assert session.query(Blob).count() == 0
@@ -21,14 +33,11 @@ def test_storage_creation(session):
 
 
 def test_transaction_record_rollback(session):
-    import transaction
-    import uuid
-    from ..storage import Resource
     rid = uuid.uuid4()
     resource = Resource('test_item', {'': {}}, rid=rid)
     session.add(resource)
-    transaction.commit()
-    transaction.begin()
+    transaction_management.commit()
+    transaction_management.begin()
     sp = session.begin_nested()
     resource = Resource('test_item', {'': {}}, rid=rid)
     session.add(resource)
@@ -37,15 +46,10 @@ def test_transaction_record_rollback(session):
     sp.rollback()
     resource = Resource('test_item', {'': {}})
     session.add(resource)
-    transaction.commit()
+    transaction_management.commit()
 
 
 def test_current_propsheet(session):
-    from ..storage import (
-        CurrentPropertySheet,
-        Resource,
-        PropertySheet,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -65,11 +69,6 @@ def test_current_propsheet(session):
 
 
 def test_current_propsheet_update(session):
-    from ..storage import (
-        CurrentPropertySheet,
-        Resource,
-        PropertySheet,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -91,11 +90,6 @@ def test_current_propsheet_update(session):
 
 
 def test_get_by_json(session):
-    from ..storage import (
-        CurrentPropertySheet,
-        Resource,
-        PropertySheet,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -117,12 +111,6 @@ def test_get_by_json(session):
 
 
 def test_purge_uuid(session, storage):
-    from ..storage import (
-        Resource,
-        Key,
-        PropertySheet,
-        CurrentPropertySheet,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -154,12 +142,6 @@ def test_purge_uuid(session, storage):
 
 
 def test_delete_compound(session, storage):
-    from ..storage import (
-        CurrentPropertySheet,
-        Resource,
-        PropertySheet,
-        Key,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -195,11 +177,6 @@ def test_delete_compound(session, storage):
 
 
 def test_keys(session):
-    from sqlalchemy.orm.exc import FlushError
-    from ..storage import (
-        Resource,
-        Key,
-    )
     name = 'testdata'
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {name: props1})
@@ -229,11 +206,6 @@ def test_keys(session):
 
 
 def test_get_sids_by_uuids(session, storage):
-    from ..storage import (
-        CurrentPropertySheet,
-        Resource,
-        PropertySheet,
-    )
     props1 = {'foo': 'bar'}
     resource = Resource('test_item', {'': props1})
     session.add(resource)
@@ -244,7 +216,6 @@ def test_get_sids_by_uuids(session, storage):
 
 
 def test_S3BlobStorage():
-    from ..storage import S3BlobStorage
     blob_bucket = 'encoded-4dn-blobs'
     storage = S3BlobStorage(blob_bucket)
     assert storage.bucket == blob_bucket
@@ -264,10 +235,47 @@ def test_S3BlobStorage():
 
 
 def test_S3BlobStorage_get_blob_url_for_non_s3_file():
-    from ..storage import S3BlobStorage
     blob_bucket = 'encoded-4dn-blobs'
     storage = S3BlobStorage(blob_bucket)
     assert storage.bucket == blob_bucket
     download_meta = {'blob_id': 'blob_id'}
     url = storage.get_blob_url(download_meta)
     assert url
+
+
+def test_pick_storage(registry, dummy_request):
+    # use a dummy value for ElasticSearchStorage
+    storage = PickStorage(RDBStorage(registry[DBSESSION]), 'dummy_es', registry)
+    assert isinstance(storage.write, RDBStorage)
+    assert storage.read == 'dummy_es'
+    # test storage selection logic
+    assert storage.storage('database') is storage.write
+    assert storage.storage('elasticsearch') == 'dummy_es'
+    with pytest.raises(Exception) as exec_info:
+        storage.storage('not_a_db')
+    assert 'Invalid forced datastore not_a_db' in str(exec_info)
+    assert storage.storage() is storage.write
+
+    dummy_request.datastore = 'elasticsearch'
+    threadlocal_manager.push({'request': dummy_request, 'registry': registry})
+    assert storage.storage() == 'dummy_es'
+    threadlocal_manager.pop()
+
+
+def test_register_storage(registry):
+    # test storage.register_storage, used to configure registry[STORAGE]
+    storage = PickStorage('dummy_db', 'dummy_es', registry)
+    # store previous storage and use a dummy one for testing
+    prev_storage = registry[STORAGE]
+    registry[STORAGE] = storage
+    # expect existing values to be used
+    register_storage(registry)
+    assert registry[STORAGE].write == 'dummy_db'
+    assert registry[STORAGE].read == 'dummy_es'
+    # expect overrides to be used
+    register_storage(registry, write_override='override_db',
+                     read_override='override_es')
+    assert registry[STORAGE].write == 'override_db'
+    assert registry[STORAGE].read == 'override_es'
+    # reset storage
+    registry[STORAGE] = prev_storage

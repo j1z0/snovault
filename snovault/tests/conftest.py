@@ -1,4 +1,6 @@
+import logging
 import pytest
+
 
 pytest_plugins = [
     'snovault.tests.serverfixtures',
@@ -15,6 +17,5 @@ def autouse_external_tx(external_tx):
 
 
 def pytest_configure():
-    import logging
     logging.basicConfig()
-    logging.getLogger('snovault').setLevel(logging.DEBUG)
+    logging.getLogger('snovault').setLevel(logging.INFO)

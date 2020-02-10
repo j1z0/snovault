@@ -1,5 +1,7 @@
 import pytest
 
+from pyramid.config import Configurator
+from .. import DBSESSION
 
 # Test for storage.keys
 
@@ -21,8 +23,6 @@ bad_items = [
 
 @pytest.fixture(scope='session')
 def app(DBSession):
-    from pyramid.config import Configurator
-    from snovault import DBSESSION
     config = Configurator()
     config.registry[DBSESSION] = DBSession
     config.include('snovault')

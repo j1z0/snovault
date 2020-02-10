@@ -1,12 +1,14 @@
-from past.builtins import basestring
-from pyramid.threadlocal import manager as threadlocal_manager
-from pyramid.httpexceptions import HTTPForbidden
-from .interfaces import CONNECTION, STORAGE, TYPES
-from copy import deepcopy
+import functools
 import json
-import structlog
 import sys
+from copy import deepcopy
 
+import structlog
+from past.builtins import basestring
+from pyramid.httpexceptions import HTTPForbidden
+from pyramid.threadlocal import manager as threadlocal_manager
+
+from .interfaces import CONNECTION, STORAGE, TYPES
 
 log = structlog.getLogger(__name__)
 
@@ -14,6 +16,54 @@ log = structlog.getLogger(__name__)
 ###################
 # Misc. utilities #
 ###################
+
+
+class DictionaryKeyError(KeyError):
+
+    def __init__(self, dictionary, key):
+        super(DictionaryKeyError, self).__init__(key)
+        self._dictionary = dictionary
+        self._dictionary_key = key
+
+    def __str__(self):
+        if isinstance(self._dictionary, dict):
+            return "%r has no %r key." % (self._dictionary, self._dictionary_key)
+        else:
+            return "%r is not a dictionary." % self._dictionary
+
+
+def dictionary_lookup(dictionary, key):
+    """
+    dictionary_lookup(d, k) is the same as d[k] but with more informative error reporting.
+    """
+    if not isinstance(dictionary, dict) or (key not in dictionary):
+        raise DictionaryKeyError(dictionary=dictionary, key=key)
+    else:
+        return dictionary[key]
+
+
+def debug_log(func):
+    """ Decorator that adds some debug output of the view to log that we got there """
+    @functools.wraps(func)
+    def log_decorator(*args, **kwargs):
+        log_function_call(log, func.__name__)
+        if not args:
+            return func(**kwargs)
+        elif not kwargs:
+            return func(*args)
+        return func(*args, **kwargs)
+    return log_decorator
+
+
+def log_function_call(log_ref, func_name, extra=None):
+    """
+    Logs that we have reached func_name in the application
+    Can log 'extra' information as well if specified
+    Helpful in debugging 500 errors on routes and logging entry to any particular function
+    """
+    log_ref.info('DEBUG_FUNC -- Entering view config: %s' % func_name)
+    if extra:
+        log_ref.info('DEBUG_FUNC -- Extra info: %s' % extra)
 
 
 def select_distinct_values(request, value_path, *from_paths):
@@ -361,8 +411,7 @@ def expand_val_for_embedded_model(request, obj_val, downstream_model, field_name
     elif isinstance(obj_val, basestring):
         # get the @@object view of obj to embed
         # TODO: per-field invalidation by adding uuids to request._linked_uuids
-        # ONLY if the field is used in downstream_model (i.e. actually in the
-        # context embedded_list)
+        # ONLY if the field is used in downstream_model (i.e. in embedded_list)
         obj_val = secure_embed(request, obj_val, '@@object')
         if not obj_val or obj_val == {'error': 'no view permissions'}:
             return obj_val
@@ -402,7 +451,7 @@ def build_embedded_model(fields_to_embed):
     {'modifications': {'modified_regions': {'fields_to_use': ['chromosome']}},
      'lab': {'fields_to_use': ['uuid']},
      'award': {'fields_to_use': ['*']},
-     'bisource': {'fields_to_use': ['name']},
+     'biosource': {'fields_to_use': ['name']},
      'fields_to_use': ['*']}
     """
     embedded_model = {'fields_to_use':['*']}
@@ -707,9 +756,7 @@ def check_es_and_cache_linked_sids(context, request, view='embedded'):
     Returns:
         The _source of the Elasticsearch result, if found. None otherwise
     """
-    from snovault.elasticsearch.indexer_utils import get_namespaced_index
-    index_name = get_namespaced_index(request, context.item_type)
-    es_model = request.registry[STORAGE].read.get_by_uuid_direct(str(context.uuid), index_name, context.item_type)
+    es_model = request.registry[STORAGE].get_by_uuid_direct(str(context.uuid), context.item_type)
     if es_model is None:
         return None
     es_res = es_model.get('_source')

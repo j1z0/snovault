@@ -1,6 +1,10 @@
-from pyramid.paster import get_app
+import argparse
 import logging
+
+from pyramid.paster import get_app
 from webtest import TestApp
+from .. import set_logging
+
 
 EPILOG = __doc__
 
@@ -22,8 +26,6 @@ def run(app, uuids=None):
 def main():
     ''' Indexes app data loaded to elasticsearch '''
 
-    import argparse
-    from snovault import set_logging
     parser = argparse.ArgumentParser(
         description="Index data in Elastic Search", epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,

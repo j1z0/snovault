@@ -1,10 +1,15 @@
-from urllib.parse import quote
+import atexit
 import os.path
+import shutil
+# try:
+#     import subprocess32 as subprocess
+# except ImportError:
+#     import subprocess
+import subprocess
 import sys
-try:
-    import subprocess32 as subprocess
-except ImportError:
-    import subprocess
+import tempfile
+
+from urllib.parse import quote
 
 
 def initdb(datadir, prefix='', echo=False):
@@ -63,9 +68,6 @@ def server_process(datadir, prefix='', echo=False):
 
 
 def main():
-    import atexit
-    import shutil
-    import tempfile
     datadir = tempfile.mkdtemp()
 
     print('Starting in dir: %s' % datadir)

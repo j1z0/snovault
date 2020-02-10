@@ -1,32 +1,22 @@
-from .. import DBSESSION
-from contextlib import contextmanager
-from multiprocessing import (
-    get_context,
-    cpu_count
-)
-from multiprocessing.pool import Pool
-from functools import partial
-from pyramid.request import apply_request_extensions
-from pyramid.threadlocal import (
-    get_current_request,
-    manager
-)
 import atexit
-import structlog
 import logging
-from .. import set_logging
-from ..storage import register_storage
-import transaction
 import signal
+import structlog
 import time
-from .indexer import (
-    INDEXER,
-    Indexer,
-)
-from .interfaces import (
-    APP_FACTORY,
-    INDEXER_QUEUE
-)
+# import transaction as transaction_proxy
+
+
+from contextlib import contextmanager
+from functools import partial
+from multiprocessing import get_context, cpu_count
+from multiprocessing.pool import Pool
+from pyramid.request import apply_request_extensions
+from pyramid.threadlocal import get_current_request, manager
+from .. import DBSESSION, set_logging
+from ..storage import register_storage, RDBStorage
+from .indexer import INDEXER, Indexer
+from .interfaces import APP_FACTORY, INDEXER_QUEUE
+
 
 log = structlog.getLogger(__name__)
 
@@ -42,17 +32,19 @@ app = None
 
 def initializer(app_factory, settings):
     """
-    Need to initialize the app for the subprocess
+    Need to initialize the app for the subprocess.
+    As part of this, configue a new database engine and set logging
     """
     from ..app import configure_engine
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     # set up global variables to use throughout subprocess
-    global app
-    atexit.register(clear_manager_and_dispose_engine)
-    app = app_factory(settings, indexer_worker=True, create_tables=False)
-
     global db_engine
+    db_engine = None
+    atexit.register(clear_manager_and_dispose_engine)
+
+    global app
+    app = app_factory(settings, indexer_worker=True, create_tables=False)
     db_engine = configure_engine(settings)
 
     # Use `es_server=app.registry.settings.get('elasticsearch.server')` when ES logging is working
@@ -70,8 +62,8 @@ def threadlocal_manager():
     import zope.sqlalchemy
     from sqlalchemy import orm
 
-    # clear threadlocal manager, though it should be clean
-    manager.pop()
+    # clear threadlocal manager to get a clean stack
+    manager.clear()
 
     registry = app.registry
     request = app.request_factory.blank('/_indexing_pool')
@@ -85,9 +77,10 @@ def threadlocal_manager():
     # configure a sqlalchemy session and set isolation level
     DBSession = orm.scoped_session(orm.sessionmaker(bind=db_engine))
     request.registry[DBSESSION] = DBSession
-    register_storage(request.registry)
+    # configue RDBStorage. Overide write storage to use new DBSession
+    register_storage(request.registry, write_override=RDBStorage(DBSession))
     zope.sqlalchemy.register(DBSession)
-    connection = request.registry[DBSESSION]().connection()
+    connection = DBSession().connection()
     connection.execute('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
 
     # add the newly created request to the pyramid threadlocal manager
@@ -98,8 +91,8 @@ def threadlocal_manager():
 
 
 def clear_manager_and_dispose_engine(signum=None, frame=None):
-    manager.pop()
-    # manually dispose of db engines for garbage collection
+    manager.clear()
+    # manually dispose of db engine for garbage collection
     if db_engine is not None:
         db_engine.dispose()
 
@@ -153,19 +146,29 @@ class MPIndexer(Indexer):
         num_cpu = cpu_count()
         self.processes = num_cpu - 2 if num_cpu - 2 > 1 else 1
         self.initargs = (registry[APP_FACTORY], registry.settings,)
-        # workers in the pool will be replaced after finishing one task
-        self.maxtasks = 1
 
     def init_pool(self):
+        """
+        Initialize multiprocessing pool.
+        Use `maxtasksperchild=1`, which causes the worker to be recycled after
+        finishing one call to `queue_update_helper`.
+        It seems like this should not be needed due to requests being
+        created by `threadlocal_manager`, but the transaction scope is not
+        correctly reset on each call to `update_objects` without it.
+
+        TODO: figure out how to remove `maxtasksperchild=1` w.r.t. pyramid_tm
+              so that transaction scope is correctly handled and we can skip
+              work done by `initializer` for each `queue_update_helper` call
+        """
         return Pool(
             processes=self.processes,
             initializer=initializer,
             initargs=self.initargs,
-            maxtasksperchild=self.maxtasks,
+            maxtasksperchild=1,  # see rationale in function documentation above.
             context=get_context('spawn'),
         )
 
-    def update_objects(self, request, counter=None):
+    def update_objects(self, request, counter):
         """
         Initializes a multiprocessing pool with args given in __init__ and
         indexes in one of two mode: synchronous or queued.
@@ -173,6 +176,7 @@ class MPIndexer(Indexer):
         breaking the list up among all available workers in the pool.
         Otherwise, all available workers will asynchronously pull uuids of the
         queue for indexing (see indexer.py).
+        Note that counter is a length 1 array (so it can be passed by reference)
         Close the pool at the end of the function and return list of errors.
         """
         pool = self.init_pool()
@@ -194,8 +198,8 @@ class MPIndexer(Indexer):
             for error in pool.imap_unordered(sync_update_helper, sync_uuids, chunkiness):
                 if error is not None:
                     errors.append(error)
-                elif counter:  # don't increment counter on an error
-                    counter[0] += 1
+                else:
+                    counter[0] += 1  # don't increment counter on an error
                 if counter[0] % 10 == 0:
                     log.info('Indexing %d (sync)', counter[0])
         else:
@@ -208,11 +212,12 @@ class MPIndexer(Indexer):
 
             # create the initial workers (same as number of processes in pool)
             for i in range(workers):
-                res = pool.apply_async(queue_update_helper, callback=callback_w_errors)
+                res = pool.apply_async(queue_update_helper,
+                                       callback=callback_w_errors)
                 async_results.append(res)
 
             # check worker statuses
-            # add more workers if any are finished and indexing is ongoing
+            # add more jobs if any are finished and indexing is ongoing
             while True:
                 results_to_add = []
                 idxs_to_rm = []
@@ -222,10 +227,11 @@ class MPIndexer(Indexer):
                         # in form: (errors <list>, counter <list>, deferred <bool>)
                         res_vals = res.get()
                         idxs_to_rm.append(idx)
-                        # add worker if overall counter has increased OR process is deferred
-                        if (counter and counter[0] > last_count) or res_vals[2] is True:
+                        # add jobs if overall counter has increased OR process is deferred
+                        if (counter[0] > last_count) or res_vals[2] is True:
                             last_count = counter[0]
-                            res = pool.apply_async(queue_update_helper, callback=callback_w_errors)
+                            res = pool.apply_async(queue_update_helper,
+                                                   callback=callback_w_errors)
                             results_to_add.append(res)
 
                 for idx in sorted(idxs_to_rm, reverse=True):

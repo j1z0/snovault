@@ -1,19 +1,25 @@
 from __future__ import unicode_literals
-from pyramid.security import (
-    Authenticated,
-    Everyone,
-    principals_allowed_by_permission,
-)
+
+import sys
+from contextlib import contextmanager
+from timeit import default_timer as timer
+
+from pyramid.settings import asbool
 from pyramid.traversal import resource_path
 from pyramid.view import view_config
 from pyramid.settings import asbool
 from timeit import default_timer as timer
 from contextlib import contextmanager
-from .resources import Item, calc_principals
+
+from .resources import Item
 from .interfaces import STORAGE
-from .embed import make_subrequest
-from .validation import ValidationFailure
 from .elasticsearch.indexer_utils import find_uuids_for_indexing
+from .embed import make_subrequest
+from .interfaces import STORAGE
+from .resources import Item
+from .util import debug_log
+from .validation import ValidationFailure
+
 
 def includeme(config):
     config.add_route('indexing-info', '/indexing-info')
@@ -73,6 +79,7 @@ def get_rev_linked_items(request, uuid):
 
 
 @view_config(context=Item, name='index-data', permission='index', request_method='GET')
+@debug_log
 def item_index_data(context, request):
     """
     Very important view which is used to calculate all the data indexed in ES
@@ -95,6 +102,7 @@ def item_index_data(context, request):
     indexing_stats = {}  # hold timing details for this view
 
     uuid = str(context.uuid)
+
     # upgrade_properties calls necessary upgraders based on schema_version
     with indexing_timer(indexing_stats, 'upgrade_properties'):
         properties = context.upgrade_properties()
@@ -105,7 +113,7 @@ def item_index_data(context, request):
         new_links['~'.join(key.split('.'))] = val
     links = new_links
 
-    principals_allowed = calc_principals(context)
+    principals_allowed = context.principals_allowed()
     path = resource_path(context)
     paths = {path}
     collection = context.collection
@@ -201,7 +209,8 @@ def item_index_data(context, request):
 
 
 @view_config(route_name='indexing-info', permission='index', request_method='GET')
-def indexing_info(request):
+@debug_log
+def indexing_info(context, request):
     """
     Endpoint to check some indexing-related properties of a given uuid, which
     is provided using the `uuid=` query parameter. This route cannot be defined
@@ -222,7 +231,9 @@ def indexing_info(request):
         return {'status': 'error', 'title': 'Error', 'message': 'ERROR! Provide a uuid to the query.'}
 
     db_sid = request.registry[STORAGE].write.get_by_uuid(uuid).sid
-    es_sid = request.registry[STORAGE].read.get_by_uuid(uuid).sid
+    # es_model will be None if the item is not yet indexed
+    es_model = request.registry[STORAGE].read.get_by_uuid(uuid)
+    es_sid = es_model.sid if es_model is not None else None
     response = {'sid_db': db_sid, 'sid_es': es_sid, 'title': 'Indexing Info for %s' % uuid}
     if asbool(request.params.get('run', True)):
         request._indexing_view = True
@@ -243,7 +254,8 @@ def indexing_info(request):
 
 
 @view_config(route_name='max-sid', permission='index', request_method='GET')
-def max_sid(request):
+@debug_log
+def max_sid(context, request):
     """
     Very simple endpoint to return the current maximum sid used in postgres.
     Might make more sense to define this view in storage.py, but leave it here

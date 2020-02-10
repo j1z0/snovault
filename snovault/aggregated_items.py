@@ -1,7 +1,11 @@
+import sys
+
+from pyramid.httpexceptions import HTTPForbidden
+from pyramid.view import view_config
+
 from .calculated import calculated_property
 from .resources import Item
-from pyramid.view import view_config
-from pyramid.httpexceptions import HTTPForbidden
+from .util import debug_log
 
 
 def includeme(config):
@@ -11,12 +15,12 @@ def includeme(config):
 
 @view_config(context=Item, permission='view', request_method='GET',
              name='aggregated-items')
+@debug_log
 def item_view_aggregated_items(context, request):
     """
-    View config for aggregated_items. If the current model does not have
-    `source`, it means we are using write (RDS) storage and not ES. In that
-    case, do not calculate the aggregated_items, as that would required
-    the whole @@index-data view to be run
+    View config for aggregated_items. If the current model is not using ES,
+    do not calculate the aggregated_items, as that would required the whole
+    @@index-data view to be run
 
     Args:
         context: current Item
@@ -26,7 +30,7 @@ def item_view_aggregated_items(context, request):
         A dictionary including item path and aggregated_items
     """
     # if we do not have the cached ES model, do not run aggs
-    if not hasattr(context.model, 'source'):
+    if context.model.used_datastore != 'elasticsearch':
         return {
             '@id': request.resource_path(context),
             'aggregated_items': {},

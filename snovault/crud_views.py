@@ -1,26 +1,20 @@
-from past.builtins import basestring
+import sys
+import transaction as transaction_management
+
 from pyramid.settings import asbool
-from pyramid.traversal import (
-    find_resource,
-)
 from pyramid.view import view_config
-from uuid import (
-    UUID,
-    uuid4,
-)
+from structlog import get_logger
+from uuid import UUID, uuid4
+from .calculated import calculated_property
 from .interfaces import (
-    COLLECTIONS,
-    CONNECTION,
     STORAGE,
     Created,
     BeforeModified,
     AfterModified,
 )
-from .resources import (
-    Collection,
-    Item,
-)
-from .calculated import calculated_property
+from .invalidation import add_to_indexing_queue
+from .resources import Collection, Item
+from .util import debug_log
 from .validation import ValidationFailure
 from .validators import (
     no_validate_item_content_patch,
@@ -31,10 +25,8 @@ from .validators import (
     validate_item_content_put,
     validate_item_content_in_place
 )
-from .invalidation import add_to_indexing_queue
-import transaction
 
-from structlog import get_logger
+
 log = get_logger(__name__)
 
 
@@ -53,7 +45,7 @@ def create_item(type_info, request, properties, sheets=None):
     '''
     registry = request.registry
     item_properties = properties.copy()
-    txn = transaction.get()
+    txn = transaction_management.get()
 
     if 'uuid' in item_properties:
         try:
@@ -86,7 +78,7 @@ def update_item(context, request, properties, sheets=None):
 
     Queues the updated item for indexing using a hook on the current transaction
     '''
-    txn = transaction.get()
+    txn = transaction_management.get()
     registry = request.registry
     item_properties = properties.copy()
     registry.notify(BeforeModified(context, request))
@@ -116,16 +108,13 @@ def purge_item(context, request):
     have been removed. Requires that the status of the item == 'deleted',
     otherwise will throw a validation failure
     """
-    from snovault.elasticsearch.indexer_utils import get_namespaced_index
     item_type = context.collection.type_info.item_type
     item_uuid = str(context.uuid)
     if context.properties.get('status') != 'deleted':
         msg = (u'Item status must equal deleted before purging from DB.' +
                ' It currently is %s' % context.properties.get('status'))
         raise ValidationFailure('body', ['status'], msg)
-    # purge_uuid fxn ensures that all links to the item are removed
-    namespaced_index = get_namespaced_index(request, item_type)
-    request.registry[STORAGE].purge_uuid(item_uuid, namespaced_index, item_type)
+    request.registry[STORAGE].purge_uuid(rid=item_uuid, item_type=item_type)
     return True
 
 
@@ -147,6 +136,7 @@ def render_item(request, context, render, return_uri_also=False):
 @view_config(context=Collection, permission='add_unvalidated', request_method='POST',
              validators=[no_validate_item_content_post],
              request_param=['validate=false'])
+@debug_log
 def collection_add(context, request, render=None):
     '''Endpoint for adding a new Item.'''
     check_only = asbool(request.params.get('check_only', False))
@@ -185,6 +175,7 @@ def collection_add(context, request, render=None):
 @view_config(context=Item, permission='index', request_method='GET',
              validators=[validate_item_content_in_place],
              request_param=['check_only=true'])
+@debug_log
 def item_edit(context, request, render=None):
     '''
     Endpoint for editing an existing Item.
@@ -225,6 +216,7 @@ def item_edit(context, request, render=None):
 
 @view_config(context=Item, permission='view', request_method='GET',
              name='links')
+@debug_log
 def get_linking_items(context, request, render=None):
     """
     Utilize find_uuids_linked_to_item function in PickStorage to find
@@ -245,6 +237,7 @@ def get_linking_items(context, request, render=None):
 
 
 @view_config(context=Item, permission='edit', request_method='DELETE')
+@debug_log
 def item_delete_full(context, request, render=None):
     """
     DELETE method that either sets the status of an item to deleted (base
@@ -297,13 +290,14 @@ def item_delete_full(context, request, render=None):
     }
 
 
+
 @view_config(context=Item, permission='view', request_method='GET',
              name='validation-errors')
+@debug_log
 def item_view_validation_errors(context, request):
     """
-    View config for validation_errors. If the current model does not have
-    `source`, it means we are using write (RDS) storage and not ES. In that
-    case, do not calculate the validation errors as it would require an extra
+    View config for validation_errors. If the current model is not using ES,
+    do not calculate the validation errors as it would require an extra
     request and some tricky permission handling.
 
     Args:
@@ -313,7 +307,7 @@ def item_view_validation_errors(context, request):
     Returns:
         A dictionary including item path and validation errors from ES
     """
-    if not hasattr(context.model, 'source'):
+    if context.model.used_datastore != 'elasticsearch':
         return {
             '@id': request.resource_path(context),
             'validation_errors': [],
