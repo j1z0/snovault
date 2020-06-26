@@ -5,7 +5,7 @@ configure:  # does any pre-requisite installs
 	pip install poetry
 
 moto-setup:
-	pip install "moto[server]"
+	pip install "moto[server]==1.3.7"
 
 macpoetry-install:
 	bin/macpoetry-install
@@ -21,13 +21,16 @@ build:
 	make moto-setup
 
 test:
-	pytest -vv --timeout=400
+	pytest -vv --timeout=200
 
 travis-test:
-	pytest -vv --timeout=400 --aws-auth --cov --es search-fourfront-builds-uhevxdzfcv7mkm5pj5svcri3aq.us-east-1.es.amazonaws.com:80
+	pytest -vv --timeout=200 --aws-auth --cov --es search-fourfront-builds-uhevxdzfcv7mkm5pj5svcri3aq.us-east-1.es.amazonaws.com:80
 
 update:
 	poetry update
+
+publish:
+	scripts/publish
 
 help:
 	@make info
