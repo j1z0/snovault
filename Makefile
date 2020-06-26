@@ -5,7 +5,7 @@ configure:  # does any pre-requisite installs
 	pip install poetry
 
 moto-setup:
-	pip install "moto[server]"
+	pip install "moto[server]==1.3.7"
 
 macpoetry-install:
 	bin/macpoetry-install
@@ -28,6 +28,9 @@ travis-test:
 
 update:
 	poetry update
+
+publish:
+	scripts/publish
 
 help:
 	@make info
